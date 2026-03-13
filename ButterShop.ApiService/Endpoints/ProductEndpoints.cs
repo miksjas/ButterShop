@@ -1,6 +1,5 @@
-using Microsoft.EntityFrameworkCore;
-using ButterShop.ApiService.Data;
 using ButterShop.ApiService.Models;
+using ButterShop.ApiService.Services;
 
 namespace ButterShop.ApiService.Endpoints;
 
@@ -10,46 +9,35 @@ public static class ProductEndpoints
     {
         var group = app.MapGroup("/api/products").WithTags("Products");
 
-        group.MapGet("/", async (AppDbContext db) =>
+        group.MapGet("/", async (IProductsService productsService) =>
         {
-            var products = await db.Products.ToListAsync();
+            var products = await productsService.GetProductsAsync();
             return Results.Ok(products);
         });
 
-        group.MapGet("/{id}", async (int id, AppDbContext db) =>
+        group.MapGet("/{id}", async (int id, IProductsService productsService) =>
         {
-            var product = await db.Products.FindAsync(id);
+            var product = await productsService.GetProductByIdAsync(id);
             return product is not null ? Results.Ok(product) : Results.NotFound();
         });
 
-        group.MapPost("/", async (Product product, AppDbContext db) =>
+        group.MapPost("/", async (Product product, IProductsService productsService) =>
         {
-            product.OrderProducts = new List<OrderProduct>();
-            db.Products.Add(product);
-            await db.SaveChangesAsync();
-            return Results.Created($"/api/products/{product.Id}", product);
+            var createdProduct = await productsService.CreateProductAsync(product);
+            return Results.Created($"/api/products/{createdProduct.Id}", createdProduct);
         });
 
-        group.MapPut("/{id}", async (int id, Product updated, AppDbContext db) =>
+        group.MapPut("/{id}", async (int id, Product updated, IProductsService productsService) =>
         {
-            var product = await db.Products.FindAsync(id);
+            var product = await productsService.UpdateProductAsync(id, updated);
             if (product is null) return Results.NotFound();
-
-            product.Name = updated.Name;
-            product.Price = updated.Price;
-            product.Description = updated.Description;
-
-            await db.SaveChangesAsync();
             return Results.Ok(product);
         });
 
-        group.MapDelete("/{id}", async (int id, AppDbContext db) =>
+        group.MapDelete("/{id}", async (int id, IProductsService productsService) =>
         {
-            var product = await db.Products.FindAsync(id);
-            if (product is null) return Results.NotFound();
-
-            db.Products.Remove(product);
-            await db.SaveChangesAsync();
+            var deleted = await productsService.DeleteProductAsync(id);
+            if (!deleted) return Results.NotFound();
             return Results.NoContent();
         });
     }
