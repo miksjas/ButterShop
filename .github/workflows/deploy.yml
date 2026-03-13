@@ -1,0 +1,89 @@
+name: Build and Deploy to Azure
+
+on:
+  push:
+    branches: [ main ]
+
+env:
+  DOTNET_VERSION: '9.0.x'
+  AZURE_WEBAPP_NAME: buttershop-api
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Publish
+        run: dotnet publish ButterShop.ApiService/ButterShop.ApiService.csproj -c Release -o ./publish
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app
+          path: ./publish
+
+  deploy-infra:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.BUTTERSHOP_SPN }}
+
+      - name: Get Subscription ID
+        id: sub
+        run: echo "id=$(az account show --query id -o tsv)" >> $GITHUB_OUTPUT
+
+      - name: Deploy Bicep
+        uses: azure/arm-deploy@v2
+        with:
+          subscriptionId: ${{ steps.sub.outputs.id }}
+          resourceGroupName: SharpShopRG
+          template: ./infra/main.bicep
+          parameters: appName=${{ env.AZURE_WEBAPP_NAME }} dbPassword=${{ secrets.DB_PASSWORD }}
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: deploy-infra
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: app
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.BUTTERSHOP_SPN }}
+
+      - name: Set connection string
+        run: |
+          az webapp config appsettings set \
+            --resource-group SharpShopRG \
+            --name ${{ env.AZURE_WEBAPP_NAME }} \
+            --settings ConnectionStrings__shopdb="Host=${{ env.AZURE_WEBAPP_NAME }}-pg.postgres.database.azure.com;Database=shopdb;Username=shopsadmin;Password=${{ secrets.DB_PASSWORD }};SSL Mode=Require"
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          package: .
